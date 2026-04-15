@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   AreaChart, Area, ComposedChart, Line, Cell
@@ -6,11 +6,25 @@ import {
 import { 
   TrendingDown, TrendingUp, DollarSign, PieChart, 
   ArrowDownRight, ArrowUpRight, Briefcase, Calendar, Layers,
-  ChevronDown, ChevronRight, Lock, LogOut, Eye, EyeOff
+  ChevronDown, ChevronRight, Lock, LogOut, Eye, EyeOff, History, Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { db } from './firebase';
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  addDoc, 
+  serverTimestamp, 
+  query, 
+  orderBy, 
+  limit,
+  getDocs,
+  where
+} from 'firebase/firestore';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -105,19 +119,67 @@ export default function App() {
 
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({ "05": true });
   const [adjustmentValues, setAdjustmentValues] = useState<Record<string, { adj2: number, adj3: number, adj4: number, details: string }>>({});
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Real-time sync with Firestore
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const unsubscribe = onSnapshot(collection(db, 'adjustments'), (snapshot) => {
+      const data: Record<string, any> = {};
+      snapshot.forEach((doc) => {
+        data[doc.id] = doc.data();
+      });
+      setAdjustmentValues(data);
+    });
+
+    return () => unsubscribe();
+  }, [isAuthenticated]);
 
   const toggleCat = (id: string) => {
     setExpandedCats(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const updateAdjustment = (dir: string, field: 'adj2' | 'adj3' | 'adj4' | 'details', val: any) => {
-    setAdjustmentValues(prev => ({
-      ...prev,
-      [dir]: {
-        ...(prev[dir] || { adj2: 0, adj3: 0, adj4: 0, details: '' }),
-        [field]: val
-      }
-    }));
+  const updateAdjustment = async (dir: string, field: 'adj2' | 'adj3' | 'adj4' | 'details', val: any) => {
+    const current = adjustmentValues[dir] || { adj2: 0, adj3: 0, adj4: 0, details: '' };
+    const newData = { ...current, [field]: val };
+    
+    // Optimistic update
+    setAdjustmentValues(prev => ({ ...prev, [dir]: newData }));
+
+    try {
+      setIsSaving(true);
+      const docRef = doc(db, 'adjustments', dir);
+      await setDoc(docRef, {
+        ...newData,
+        dir,
+        updatedAt: serverTimestamp(),
+        updatedBy: 'Usuário'
+      });
+
+      // Add to history
+      await addDoc(collection(db, 'history'), {
+        adjustmentId: dir,
+        dir,
+        ...newData,
+        timestamp: serverTimestamp(),
+        user: 'Usuário'
+      });
+    } catch (error) {
+      console.error("Error saving to Firestore:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const fetchHistory = async () => {
+    const q = query(collection(db, 'history'), orderBy('timestamp', 'desc'), limit(50));
+    const snapshot = await getDocs(q);
+    const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setHistoryData(history);
+    setShowHistory(true);
   };
 
   // Aggregations
@@ -231,6 +293,19 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {isSaving && (
+              <div className="flex items-center gap-2 text-xs text-blue-600 animate-pulse bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
+                <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-ping" />
+                Salvando...
+              </div>
+            )}
+            <button 
+              onClick={fetchHistory}
+              className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2 text-slate-600 hover:bg-slate-50 transition-all"
+            >
+              <History className="w-4 h-4" />
+              <span className="font-medium">Histórico</span>
+            </button>
             <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-3">
               <Calendar className="w-5 h-5 text-slate-400" />
               <span className="font-medium text-slate-700">Visão Anual (Q1 a Q4)</span>
@@ -244,6 +319,59 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        <AnimatePresence>
+          {showHistory && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
+            >
+              <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <History className="w-5 h-5 text-blue-600" />
+                  Monitoramento de Versões (Últimas 50 alterações)
+                </h3>
+                <button 
+                  onClick={() => setShowHistory(false)}
+                  className="text-slate-400 hover:text-slate-600 text-sm font-medium"
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="max-h-[400px] overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 text-slate-600 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2">Data/Hora</th>
+                      <th className="px-4 py-2">Diretoria</th>
+                      <th className="px-4 py-2">Adj Q2</th>
+                      <th className="px-4 py-2">Adj Q3</th>
+                      <th className="px-4 py-2">Adj Q4</th>
+                      <th className="px-4 py-2">Detalhamento</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {historyData.map((h, i) => (
+                      <tr key={i} className="hover:bg-slate-50">
+                        <td className="px-4 py-2 text-slate-500 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {h.timestamp?.toDate ? h.timestamp.toDate().toLocaleString('pt-BR') : 'Agora'}
+                        </td>
+                        <td className="px-4 py-2 font-medium">{h.dir}</td>
+                        <td className="px-4 py-2">{formatCurrency(h.adj2 || 0)}</td>
+                        <td className="px-4 py-2">{formatCurrency(h.adj3 || 0)}</td>
+                        <td className="px-4 py-2">{formatCurrency(h.adj4 || 0)}</td>
+                        <td className="px-4 py-2 text-slate-500 italic">{h.details || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">

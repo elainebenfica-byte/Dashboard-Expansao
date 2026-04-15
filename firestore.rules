@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: adjustments
+    // Fields:
+    //   - dir: string (required)
+    //   - adj2: number
+    //   - adj3: number
+    //   - adj4: number
+    //   - details: string
+    //   - updatedAt: timestamp (required)
+    //   - updatedBy: string
+    //
+    // Collection: history
+    // Fields:
+    //   - adjustmentId: string (required)
+    //   - dir: string (required)
+    //   - adj2: number
+    //   - adj3: number
+    //   - adj4: number
+    //   - details: string
+    //   - timestamp: timestamp (required)
+    //   - user: string
+    //
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidAdjustment(data) {
+      return data.dir is string && data.dir.size() > 0 &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidHistory(data) {
+      return data.adjustmentId is string && data.dir is string &&
+             data.timestamp is timestamp;
+    }
+
+    match /adjustments/{adjId} {
+      allow read: if true; // Publicly readable for the dashboard
+      allow write: if true; // In this specific app, we allow writes without auth for simplicity as requested (public app)
+      // Note: In a real production app, we would use isAuthenticated()
+    }
+
+    match /history/{historyId} {
+      allow read: if true;
+      allow create: if true;
+    }
+  }
+}

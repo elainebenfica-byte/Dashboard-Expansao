@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Adjustment": {
+      "title": "Adjustment",
+      "description": "Manual adjustments made to the dashboard by users.",
+      "type": "object",
+      "properties": {
+        "dir": { "type": "string", "description": "The directory name (Centro de Custo)." },
+        "adj2": { "type": "number", "description": "Adjustment for Q2." },
+        "adj3": { "type": "number", "description": "Adjustment for Q3." },
+        "adj4": { "type": "number", "description": "Adjustment for Q4." },
+        "details": { "type": "string", "description": "Detailing text for the adjustment." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp." },
+        "updatedBy": { "type": "string", "description": "User who made the change." }
+      },
+      "required": ["dir", "updatedAt"]
+    },
+    "History": {
+      "title": "History",
+      "description": "Version history of adjustments.",
+      "type": "object",
+      "properties": {
+        "adjustmentId": { "type": "string", "description": "Reference to the adjustment document." },
+        "dir": { "type": "string" },
+        "adj2": { "type": "number" },
+        "adj3": { "type": "number" },
+        "adj4": { "type": "number" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "user": { "type": "string" }
+      },
+      "required": ["adjustmentId", "dir", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/adjustments/{adjId}": {
+      "schema": "Adjustment",
+      "description": "Current state of adjustments per directory."
+    },
+    "/history/{historyId}": {
+      "schema": "History",
+      "description": "Historical log of all changes."
+    }
+  }
+}
